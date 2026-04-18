@@ -2,8 +2,8 @@
 from pynput.keyboard import Key, KeyCode
 from pynput.mouse import Button
 
-# The 8 specific actions we care about
-# We'll map them 0 to 7
+# The 10 specific actions we care about
+# We'll map them 0 to 9
 ACTIONS = {
     0: 'w',
     1: 'a',
@@ -12,7 +12,9 @@ ACTIONS = {
     4: 'space',
     5: 'shift',
     6: 'click_left',
-    7: 'click_right'
+    7: 'click_right',
+    8: 'up',       # Chrome Dino: jump
+    9: 'down',     # Chrome Dino: duck
 }
 
 # Reverse mapping for logging
@@ -31,6 +33,10 @@ def pynput_key_to_action(key):
             return 'space'
         elif key == Key.shift or key == Key.shift_l or key == Key.shift_r:
             return 'shift'
+        elif key == Key.up:
+            return 'up'
+        elif key == Key.down:
+            return 'down'
     return None
 
 def pynput_mouse_to_action(button):
@@ -53,4 +59,8 @@ def action_to_pynput(action_str):
         return Button.left
     elif action_str == 'click_right':
         return Button.right
+    elif action_str == 'up':
+        return Key.up
+    elif action_str == 'down':
+        return Key.down
     return None

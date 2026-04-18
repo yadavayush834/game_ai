@@ -3,7 +3,7 @@ import torch.nn as nn
 from torchvision.models import mobilenet_v2, MobileNet_V2_Weights
 
 NUM_FRAMES = 4   # how many consecutive frames to stack
-NUM_ACTIONS = 8  # w, a, s, d, space, shift, click_left, click_right
+NUM_ACTIONS = 10  # w, a, s, d, space, shift, click_left, click_right, up, down
 
 
 class GameBotModel(nn.Module):

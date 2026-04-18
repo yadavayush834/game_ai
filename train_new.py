@@ -20,7 +20,7 @@ import torch.nn as nn
 from torch.utils.data import DataLoader
 from torch.optim.lr_scheduler import CosineAnnealingLR
 
-from core.model import GameBotModel, NUM_FRAMES
+from core.model import GameBotModel, NUM_FRAMES, NUM_ACTIONS
 from core.dataset import get_train_val_datasets
 from core.utils import ACTIONS
 
@@ -56,7 +56,7 @@ def train(args):
 
     # Multi-label classification → BCEWithLogitsLoss
     # Use pos_weight to handle class imbalance (keys are mostly NOT pressed)
-    pos_weight = torch.tensor([3.0] * 8, device=device)
+    pos_weight = torch.tensor([3.0] * NUM_ACTIONS, device=device)
     criterion = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
 
     # Use different LRs: small for pretrained backbone, full for new layers
