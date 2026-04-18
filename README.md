@@ -1,4 +1,4 @@
-# 🎮 Game-Bot — AI That Learns to Play Any Game by Watching You
+#Game-Bot — AI That Learns to Play Any Game by Watching You
 
 An AI agent that watches you play a game, learns your moves, then plays the game itself.
 Built with PyTorch, MobileNetV2, frame stacking, and DAgger iterative correction.
