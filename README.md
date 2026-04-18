@@ -1,5 +1,5 @@
 # Game Bot
-### Originally by Arda Mavi — Rewritten & Supercharged
+### Originally by Arda Mavi — Rewritten 
 
 An AI that **learns to play any game by watching you**.  
 Record your gameplay, train a neural network, then sit back and watch the AI play.
