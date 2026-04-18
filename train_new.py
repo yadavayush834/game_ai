@@ -2,11 +2,13 @@
 """
 train_new.py — Train the Game-Bot model on recorded sessions.
 
+Model: MobileNetV2 backbone + frame stacking (4 grayscale frames)
+
 Usage:
     python train_new.py                        # Train with defaults
     python train_new.py --epochs 200           # Custom epoch count
     python train_new.py --lr 0.0005            # Custom learning rate
-    python train_new.py --batch 32             # Custom batch size
+    python train_new.py --batch 16             # Custom batch size (lower for MobileNetV2)
     python train_new.py --resume               # Resume from latest checkpoint
 """
 
@@ -18,7 +20,7 @@ import torch.nn as nn
 from torch.utils.data import DataLoader
 from torch.optim.lr_scheduler import CosineAnnealingLR
 
-from core.model import GameBotModel
+from core.model import GameBotModel, NUM_FRAMES
 from core.dataset import get_train_val_datasets
 from core.utils import ACTIONS
 
@@ -28,7 +30,7 @@ def train(args):
     print(f"Using device: {device}")
 
     # ── Data ──────────────────────────────────────────────────────────────
-    train_ds, val_ds = get_train_val_datasets(data_dir=args.data_dir)
+    train_ds, val_ds = get_train_val_datasets(data_dir=args.data_dir, num_frames=NUM_FRAMES)
 
     train_loader = DataLoader(
         train_ds,
@@ -47,14 +49,23 @@ def train(args):
     )
 
     # ── Model ─────────────────────────────────────────────────────────────
-    model = GameBotModel(num_actions=8).to(device)
+    model = GameBotModel(num_actions=8, num_frames=NUM_FRAMES).to(device)
+    trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    total     = sum(p.numel() for p in model.parameters())
+    print(f"Model: {trainable:,} trainable params / {total:,} total (MobileNetV2 backbone)")
 
     # Multi-label classification → BCEWithLogitsLoss
     # Use pos_weight to handle class imbalance (keys are mostly NOT pressed)
     pos_weight = torch.tensor([3.0] * 8, device=device)
     criterion = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
 
-    optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=1e-4)
+    # Use different LRs: small for pretrained backbone, full for new layers
+    backbone_params    = list(model.features.parameters())
+    new_params         = list(model.frame_proj.parameters()) + list(model.classifier.parameters())
+    optimizer = torch.optim.AdamW([
+        {"params": backbone_params, "lr": args.lr * 0.1},   # fine-tune backbone slowly
+        {"params": new_params,      "lr": args.lr},           # train new layers normally
+    ], weight_decay=1e-4)
     scheduler = CosineAnnealingLR(optimizer, T_max=args.epochs, eta_min=1e-6)
 
     start_epoch = 0
@@ -129,11 +140,11 @@ def train(args):
         lr_now = optimizer.param_groups[0]["lr"]
         print(
             f"Epoch {epoch+1:4d}/{args.epochs} | "
-            f"Train Loss: {train_loss:.4f} | "
-            f"Val Loss: {val_loss:.4f} | "
+            f"Train: {train_loss:.4f} | "
+            f"Val: {val_loss:.4f} | "
             f"Acc: {accuracy:.4f} | "
-            f"LR: {lr_now:.6f} | "
-            f"Time: {elapsed:.1f}s"
+            f"LR: {lr_now:.2e} | "
+            f"{elapsed:.1f}s"
         )
 
         # ── Checkpoints ──────────────────────────────────────────────
@@ -161,7 +172,8 @@ def train(args):
 def main():
     parser = argparse.ArgumentParser(description="Game-Bot Trainer")
     parser.add_argument("--epochs", type=int, default=100)
-    parser.add_argument("--batch", type=int, default=32)
+    parser.add_argument("--batch", type=int, default=16,
+                        help="Batch size — keep ≤16 for MobileNetV2 on CPU")
     parser.add_argument("--lr", type=float, default=1e-3)
     parser.add_argument("--workers", type=int, default=4)
     parser.add_argument("--data-dir", type=str, default="Data/Recordings")

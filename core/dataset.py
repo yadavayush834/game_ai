@@ -1,83 +1,121 @@
-# dataset.py — PyTorch Dataset for Game-Bot
+"""
+core/dataset.py — Frame-stacked PyTorch Dataset for Game-Bot.
+
+Each sample returns NUM_FRAMES consecutive grayscale frames stacked as a
+single tensor (NUM_FRAMES, H, W) paired with the label of the LAST frame.
+Frames at the start of a session are zero-padded.
+"""
+
 import os
 import csv
 import numpy as np
 from PIL import Image
 import torch
-from torch.utils.data import Dataset
+from torch.utils.data import Dataset, ConcatDataset, random_split
 from torchvision import transforms
+
+from core.model import NUM_FRAMES
+
+# ── Per-frame pre-processing ──────────────────────────────────────────────────
+# Converted to grayscale; NOT normalised here — we normalise the stacked tensor
+_FRAME_TRANSFORM = transforms.Compose([
+    transforms.Resize((150, 150)),
+    transforms.Grayscale(),               # RGB → 1-channel grayscale
+    transforms.ToTensor(),                # (1, H, W), values in [0, 1]
+])
+
 
 class GameBotDataset(Dataset):
     """
-    Reads a CSV manifest created by record.py.
-    Each row: frame_path, w, a, s, d, space, shift, click_left, click_right
-    Labels are multi-label binary vectors (0 or 1 per action).
+    Reads a session's manifest.csv.
+
+    CSV format (written by record.py):
+        frame,w,a,s,d,space,shift,click_left,click_right
+        frames/frame_00000000.png,0,0,0,0,0,0,0,0
+        ...
+
+    __getitem__(i) returns:
+        frames_tensor : (NUM_FRAMES, H, W) float32   — stacked grayscale frames
+        label         : (8,)              float32   — multi-label binary vector
     """
 
-    def __init__(self, csv_path, transform=None):
-        self.samples = []
+    def __init__(self, csv_path: str, num_frames: int = NUM_FRAMES):
+        self.num_frames = num_frames
         self.base_dir = os.path.dirname(csv_path)
-
-        if transform is None:
-            self.transform = transforms.Compose([
-                transforms.Resize((150, 150)),
-                transforms.ToTensor(),                       # HWC uint8 → CHW float [0,1]
-                transforms.Normalize(mean=[0.485, 0.456, 0.406],
-                                     std=[0.229, 0.224, 0.225]),
-            ])
-        else:
-            self.transform = transform
+        self.frame_paths = []
+        self.labels = []
 
         with open(csv_path, 'r', newline='') as f:
             reader = csv.reader(f)
-            header = next(reader)  # skip header
+            next(reader)                           # skip header
             for row in reader:
-                frame_path = row[0]
-                if not os.path.isabs(frame_path):
-                    frame_path = os.path.join(self.base_dir, frame_path)
-                labels = [int(x) for x in row[1:]]
-                self.samples.append((frame_path, labels))
+                fp = row[0]
+                if not os.path.isabs(fp):
+                    fp = os.path.join(self.base_dir, fp)
+                self.frame_paths.append(fp)
+                self.labels.append([int(x) for x in row[1:]])
 
-    def __len__(self):
-        return len(self.samples)
+    # ── helpers ───────────────────────────────────────────────────────────────
 
-    def __getitem__(self, idx):
-        frame_path, labels = self.samples[idx]
-        image = Image.open(frame_path).convert('RGB')
-        image = self.transform(image)
-        labels = torch.tensor(labels, dtype=torch.float32)
-        return image, labels
+    def _load_frame(self, path: str) -> torch.Tensor:
+        """Load one PNG and apply the per-frame transform → (1, H, W)."""
+        img = Image.open(path).convert('RGB')
+        return _FRAME_TRANSFORM(img)               # (1, H, W)
+
+    # ── Dataset interface ─────────────────────────────────────────────────────
+
+    def __len__(self) -> int:
+        return len(self.frame_paths)
+
+    def __getitem__(self, idx: int):
+        # Build a window of self.num_frames consecutive frames.
+        # Indices before the session start are zero-padded.
+        frames = []
+        for offset in range(self.num_frames - 1, -1, -1):  # oldest → newest
+            src_idx = idx - offset
+            if src_idx < 0:
+                frames.append(torch.zeros(1, 150, 150))    # zero padding
+            else:
+                frames.append(self._load_frame(self.frame_paths[src_idx]))
+
+        # Stack along channel dim → (NUM_FRAMES, H, W)
+        stacked = torch.cat(frames, dim=0)
+
+        label = torch.tensor(self.labels[idx], dtype=torch.float32)
+        return stacked, label
 
 
-def get_train_val_datasets(data_dir='Data/Recordings', val_split=0.15):
+# ── Utility: build train / val splits from all recorded sessions ──────────────
+
+def get_train_val_datasets(data_dir: str = 'Data/Recordings',
+                           val_split: float = 0.15,
+                           num_frames: int = NUM_FRAMES):
     """
-    Scans *all* session CSVs inside data_dir, merges them into one large
-    dataset, then splits into train / val.
+    Walks data_dir recursively and collects every manifest.csv.
+    Merges all sessions into one ConcatDataset, then splits train/val.
     """
-    from torch.utils.data import ConcatDataset, random_split
-
     all_csvs = []
-    for root, dirs, files in os.walk(data_dir):
+    for root, _dirs, files in os.walk(data_dir):
         for f in files:
             if f == 'manifest.csv':
                 all_csvs.append(os.path.join(root, f))
 
     if not all_csvs:
         raise FileNotFoundError(
-            f"No manifest.csv files found under {data_dir}. "
-            "Run record.py first to capture training data."
+            f"No manifest.csv files found under '{data_dir}'.\n"
+            "Run:  python record.py   to capture training data first."
         )
 
-    datasets = [GameBotDataset(csv_path) for csv_path in all_csvs]
+    datasets = [GameBotDataset(p, num_frames=num_frames) for p in all_csvs]
     merged = ConcatDataset(datasets)
 
-    val_size = max(1, int(len(merged) * val_split))
+    val_size   = max(1, int(len(merged) * val_split))
     train_size = len(merged) - val_size
     train_ds, val_ds = random_split(
         merged, [train_size, val_size],
-        generator=torch.Generator().manual_seed(42)
+        generator=torch.Generator().manual_seed(42),
     )
 
-    print(f"Loaded {len(merged)} samples from {len(all_csvs)} session(s).")
-    print(f"  Train: {train_size}  |  Val: {val_size}")
+    print(f"Found {len(all_csvs)} session(s) → {len(merged)} total samples")
+    print(f"  Train: {train_size}  |  Val: {val_size}  |  Frames stacked: {num_frames}")
     return train_ds, val_ds
