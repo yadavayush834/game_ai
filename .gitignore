@@ -1,3 +1,9 @@
-__pycache__
+Data/
+venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pt
+*.h5
+*.hdf5
 .DS_Store
-Data

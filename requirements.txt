@@ -1,8 +1,6 @@
+torch
+torchvision
 numpy
-scikit-learn
-scikit-image
 pillow
-tensorflow
-keras
+mss
 pynput
-h5py
